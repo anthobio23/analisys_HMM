@@ -1,0 +1,150 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+**import library**
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(markovchain)
+library(dplyr)
+library(patchwork)
+library(hrbrthemes)
+```
+
+
+**loading of data.**
+```{r}
+data_text <- readxl::read_xlsx(path = "WholeData_cardano_adaCoin.xlsx")
+data_score <- readxl::read_xlsx(path = "Cardano_ada_data (2).xlsx")
+```
+
+```{r}
+glimpse(x = data_text)
+```
+```{r}
+# data_text$comment[1]
+glimpse(data_score)
+```
+
+*Transformacion de variables de fecha*
+```{r}
+# removemos la coma de las fecha para el inner join.
+data_score <- data_score %>%
+  mutate(Date = str_replace_all(Date, ",", ""))
+```
+
+
+```{r}
+# manejando expresiones regulares
+data_score <- data_score %>%
+  mutate(Date = sub(pattern="?Jun", c("June"), Date)) %>%
+  mutate(Date = sub(pattern="?Apr", c("April"), Date))
+
+data_text <- data_text %>%
+  mutate(comm_date = format(comm_date, format = "%B %d %Y")) %>%
+  mutate(post_date = format(post_date, format = "%B %d %Y"))
+
+# cambiamos el nombre de la variables comm_date a Date para el inner join
+data_text <- reshape::rename(data_text, c(comm_date = "Date"))
+names(data_text)
+```
+
+```{r}
+# transforamcion de variables
+data_score <- data_score %>%
+  mutate(Date = as.Date.character(Date, format = "%B %d %Y"))
+
+data_text <- data_text %>% 
+  mutate(Date = as.Date.character(Date, format = "%B %d %Y"),
+         post_date = as.Date.character(post_date, format = "%B %d %Y"),
+         id = as.integer(id),
+         comment_score = as.integer(comment_score))
+```
+
+**Creacion del dataframe sobre correlacion**
+```{r}
+df_cor <- inner_join(x = data_score, y = data_text, by = "Date") %>%
+  group_by(id, comment_score, Price) %>%
+  select(Date, id, comment_score, Price) %>%
+  unique()
+  
+```
+
+**prueba de normalidad de los datos **
+```{r}
+shapiro.test(df_cor$comment_score)
+```
+observacion: dado que el valor de p-value es menor que 0.05 (alfa) entonces
+diremos que no existe evidencia suficiente para no rechazar la hipotesis nula 
+de que los datos de la muestra provienen de una poblacion con distribucion normal.
+por lo tanto, los datos del puntaje de los comentarios no provienen de una distribucion
+normal.
+
+```{r}
+shapiro.test(df_cor$Price)
+```
+observacion: dado que el valor de p-value es menor que 0.05 (alfa) entonces
+diremos que no existe evidencia suficiente para no rechazar la hipotesis nula 
+de que los datos de la muestra provienen de una poblacion con distribucion normal.
+por lo tanto, los datos del precio de la criptomoneda no provienen de una distribucion
+normal.
+
+**graficos**
+```{r}
+df_cor %>%
+  ggplot(mapping = aes(x=Price, y=comment_score)) +
+  geom_point() +
+  ggtitle("Trend of data") +
+  theme_ipsum_pub()
+```
+Observacion: Como podemos ver, tenemos una tendencia nula, con una fuerza de correlacion debil.
+
+puesto que no vemos ninguna tendencia lineal en los datos, pero si una aumento en 
+el precio de la criptomoneda con respecto al puntaje de comentarios. realizaremos una
+prueba de correlacion de *Spearman*
+```{r}
+# coeficiente de correlacion de Spearman
+cor(x=df_cor$comment_score, y=df_cor$Price, method="spearman")
+```
+observacion: cuantitativamente podemos oberservar que la correlacion de los datos es casi nula
+
+*Grafico de series temporales*
+```{r}
+plot1 <- df_cor %>%
+  ggplot(mapping=aes(Date, Price)) +
+  geom_line(color = "#69b3a2", size = 2) +
+  ggtitle("Price for Date") +
+  theme_ipsum()
+
+plot2 <- df_cor %>%
+  ggplot(mapping=aes(Date, comment_score)) +
+  geom_line(color="grey", size = 2) +
+  ggtitle("Score per comment to Date") +
+  theme_ipsum()
+
+plot1 + plot2
+```
+Observaciones: los grafics de series temporales nos muestra un aumento en el precio 
+de la criptomoneda durante el mes de mayo. asi mismo durante este periodo, es
+posible observar que los puntos de los comentarios han aumentado. por el contrario
+durante el mes de junio podemos ver una caida del precio que no corresponderia
+al puntaje de los comentarios de los usuarios de reddit para compras de criptomonedas.
+
+**Modelo HMM**
+```{r}
+df_hmm <- inner_join(x=data_score, y=data_text, by="Date") %>%
+  group_by(Date, Price, comment) %>%
+  select(Date, Price, comment) %>%
+  unique()
+```
+
+```{r}
+m_price <- matrix(df_hmm$Price, byrow = TRUE)
+matrix(df_hmm$comment)
+mc <- new("markovchain", transitionMatrix=m_price, states = df_hmm$comment, name = "comments")
+
+
+```
+
